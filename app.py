@@ -2,6 +2,8 @@ import os
 import streamlit as st
 import tempfile
 
+from pymongo import MongoClient
+
 from decouple import config
 
 from langchain.chains.combine_documents import create_stuff_documents_chain
@@ -15,6 +17,15 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
 os.environ['OPENAI_API_KEY'] = config('OPENAI_API_KEY')
 persist_directory = 'db'
+OPENAI_MODEL_NAME = config('OPENAI_MODEL_NAME')
+
+MONGO_URI = config('MONGO_URI')
+client = MongoClient(MONGO_URI)
+db = client['sample_mfix']
+collection = db['movies']
+
+
+collection.create_index([('title', 'text'), ('description', 'text')])
 
 
 def process_pdf(file):
@@ -28,9 +39,10 @@ def process_pdf(file):
     os.remove(temp_file_path)
 
     text_spliter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=400,
+        chunk_size=500,
+        chunk_overlap=200,
     )
+
     chunks = text_spliter.split_documents(documents=docs)
     return chunks
 
@@ -67,24 +79,59 @@ def ask_question(model, query, vector_store):
     elaboradas e interativas.
     Contexto: {context}
     '''
+
+    max_context_messages = 5
+    context_messages = st.session_state.messages[-max_context_messages:]
+
     messages = [('system', system_prompt)]
-    for message in st.session_state.messages:
-        messages.append((message.get('role'), message.get('content')))
-    messages.append(('human', '{input}'))
+    for message in context_messages:
+        if message.get('content') is not None and message.get('role') is not None:
+            messages.append((message.get('role'), message.get('content')))
+    
+    # Adiciona a pergunta do usuário como 'human'
+    messages.append(('human', query))
 
-    prompt = ChatPromptTemplate.from_messages(messages)
+    if not messages:
+        return "Erro: Nenhuma mensagem válida encontrada para gerar o prompt."
 
-    question_answer_chain = create_stuff_documents_chain(
-        llm=llm,
-        prompt=prompt,
-    )
+    try:
+        # Consulta MongoDB antes de recorrer ao vector_store
+        mongo_result = collection.find_one({"$text": {"$search": query}})
+        
+        if mongo_result:
+            # Retornar as informações encontradas no MongoDB
+            movie_info = f"Título: {mongo_result.get('title')}\nDescrição: {mongo_result.get('description')}"
+            return movie_info
+        else:
+            # Se não encontrar no MongoDB, continuar com o vector_store
+            prompt = ChatPromptTemplate.from_messages(messages)
 
-    chain = create_retrieval_chain(
-        retriever=retriever,
-        combine_docs_chain=question_answer_chain,
-    )
-    response = chain.invoke({'input': query})
-    return response.get('answer')
+            question_answer_chain = create_stuff_documents_chain(
+                llm=llm,
+                prompt=prompt,
+            )
+
+            chain = create_retrieval_chain(
+                retriever=retriever,
+                combine_docs_chain=question_answer_chain,
+            )
+
+            # Invocar o processo de cadeia
+            response = chain.invoke({'input': query})
+            answer = response.get('answer')
+
+            if answer is None:
+                answer = "Desculpe, não consegui gerar uma resposta adequada."
+
+    except Exception as e:
+        # Capture qualquer erro e forneça uma resposta padrão
+        answer = f"Erro ao gerar a resposta: {e}"
+
+    return answer
+
+
+
+
 
 vector_store = load_existing_vector_store()
 
@@ -108,9 +155,10 @@ with st.sidebar:
     if uploaded_files:
         with st.spinner('Processando documentos...'):
             all_chunks = []
-            for uploaded_files in uploaded_files:
-                chunks = process_pdf(file=uploaded_files)
+            for uploaded_file in uploaded_files:
+                chunks = process_pdf(file=uploaded_file)
                 all_chunks.extend(chunks)
+
             vector_store = add_to_vector_store(
                 chunks=all_chunks,
                 vector_store=vector_store,
@@ -125,6 +173,7 @@ with st.sidebar:
     selected_model = st.sidebar.selectbox(
         label='Selecione o modelo LLM',
         options=model_options,
+        index=model_options.index(OPENAI_MODEL_NAME) if OPENAI_MODEL_NAME in model_options else 0
     )
 
 
@@ -148,3 +197,31 @@ if vector_store and question:
 
     st.chat_message('ai').write(response)
     st.session_state.messages.append({'role': 'ai', 'content': response})
+
+
+def test_mongo_connection():
+    try:
+        # Testar leitura de documentos
+        sample_document = collection.find_one()  # Buscar um documento da coleção
+        if sample_document:
+            st.success("Conexão com MongoDB bem-sucedida!")
+            st.write("Documento de exemplo:", sample_document)
+        else:
+            st.warning("A conexão foi bem-sucedida, mas a coleção está vazia.")
+    except Exception as e:
+        st.error(f"Erro ao conectar com o MongoDB: {e}")
+
+# Chamar a função de teste na interface Streamlit
+st.sidebar.button("Testar Conexão com MongoDB", on_click=test_mongo_connection)
+
+
+
+try:
+    response = ask_question(
+        model=selected_model,
+        query=question,
+        vector_store=vector_store,
+    )
+except Exception as e:
+    st.error(f"Erro ao gerar a resposta: {e}")
+
