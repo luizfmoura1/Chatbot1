@@ -39,7 +39,7 @@ def ask_question(query):
     except Exception as e:
         return f"Erro ao realizar a consulta: {e}"
 
-# Interface do Streamlit
+
 st.set_page_config(
     page_title='IA_teste1',
     page_icon='🤖',
