@@ -38,7 +38,7 @@ def load_existing_vector_store():
     if os.path.exists(os.path.join(persist_directory)):
         vector_store = Chroma(
             persist_directory=persist_directory,
-            embedding_function=OpenAIEmbeddings(),
+            embedding_function=OpenAIEmbeddings(model="text-embedding-3-small", max_retries="2"),
         )
         return vector_store
     return None
@@ -50,7 +50,7 @@ def add_to_vector_store(chunks, vector_store=None):
     else:
         vector_store = Chroma.from_documents(
             documents=chunks,
-            embedding=OpenAIEmbeddings(),
+            embedding=OpenAIEmbeddings(model="text-embedding-3-small", max_retries="2"),
             persist_directory=persist_directory,
         )
     return vector_store
@@ -119,7 +119,7 @@ with st.sidebar:
         'gpt-3.5-turbo',
         'gpt-4',
         'gpt-4-turbo',
-        'gpt-4-mini',
+        'gpt-4o-mini',
         'gpt-4o',
     ]
     selected_model = st.sidebar.selectbox(
