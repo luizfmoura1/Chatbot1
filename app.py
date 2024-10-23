@@ -14,38 +14,27 @@ client = MongoClient(MONGO_URI)
 db = client['sample_mflix']
 collection = db['movies']
 
-# Criar índice de texto no MongoDB para busca eficiente
-#collection.create_index([('title', 'text'), ('description', 'text')])
+# Criar índice de texto no MongoDB para busca eficiente (se ainda não estiver criado)
+# collection.create_index([('title', 'text'), ('fullplot', 'text'), ('genres', 'text')])
 
-def ask_question(model, query):
+def ask_question(query):
     try:
-        # Define o system_prompt com o contexto fornecido
-        system_prompt = '''
-        Use o contexto para responder as perguntas.
-        Se não encontrar uma resposta no contexto,
-        explique que não há informações disponíveis.
-        Responda em formato de markdown e com visualizações
-        elaboradas e interativas.
-        Contexto: {context}
-        '''
-        
-        # Realiza a consulta no MongoDB usando o índice existente (title, cast, fullplot, genres)
+        # Busca no MongoDB por um documento que contenha o texto da query
         mongo_result = collection.find_one({"$text": {"$search": query}})
         
-        # Define o contexto com os dados do MongoDB ou uma mensagem padrão
-        context = mongo_result if mongo_result else "Informações não encontradas no banco de dados."
-        
-        # Substitui o placeholder {context} com o contexto
-        final_prompt = system_prompt.replace("{context}", str(context))
-        
-        # Retorna o prompt final
-        return final_prompt
-
+        # Verifica se há um resultado e gera uma resposta baseada nos campos disponíveis
+        if mongo_result:
+            # Compila as informações do resultado em uma única resposta
+            title = mongo_result.get('title', 'Título não disponível')
+            fullplot = mongo_result.get('fullplot', 'Descrição não disponível')
+            genres = ', '.join(mongo_result.get('genres', []))
+            response = f"**Título**: {title}\n\n**Descrição**: {fullplot}\n\n**Gêneros**: {genres}"
+            return response
+        else:
+            return "Não encontrei informações relevantes no banco de dados."
+    
     except Exception as e:
-        return f"Erro ao gerar a resposta: {e}"
-
-
-
+        return f"Erro ao realizar a consulta: {e}"
 
 # Interface do Streamlit
 st.set_page_config(
@@ -85,7 +74,6 @@ if question:
 
     # Processar a pergunta e exibir a resposta do chatbot
     response = ask_question(
-        model=selected_model,
         query=question,
     )
 
@@ -110,7 +98,6 @@ st.sidebar.button("Testar Conexão com MongoDB", on_click=test_mongo_connection)
 
 try:
     response = ask_question(
-        model=selected_model,
         query=question,
     )
 except Exception as e:
